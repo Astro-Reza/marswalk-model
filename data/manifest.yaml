@@ -1,0 +1,126 @@
+# Marswalk NASA data manifest.
+# status: "verified" = source page confirmed to exist in a web search on 2026-11-14.
+#         "to-confirm" = named from project notes / general knowledge; check the product page before relying on it.
+# Resolutions are NOT filled in unless a source stated them. Fill in `resolution_m` after opening the product.
+grid:
+  cell_size_m: 8
+  shape: [130, 180]        # rows, cols (prototype: 1.44 x 1.04 km)
+  site: "Mount Sharp / Aeolis Mons foothills, Gale crater (suggested; confirm)"
+  note: "All layers get clipped, reprojected and resampled onto this one grid."
+
+layers:
+  - id: Z
+    name: Elevation (topography)
+    brief_type: topographic
+    feeds: slope (SL), hillshade (SH), sky-view factor for DOSE, route cost
+    sources:
+      - name: HiRISE Digital Terrain Models (primary, footprint-level)
+        pds_dataset_id: MRO-M-HIRISE-5-DTM-V1.0
+        pds4: urn:nasa:pds:mro_hirise:dtm
+        format: PDS .IMG, 32-bit raster
+        pages:
+          - https://www.uahirise.org/dtm/            # DTM catalogue; search for Gale / Mount Sharp
+          - https://www.uahirise.org/dtm/about.php
+          - https://registry.opendata.aws/nasa-usgs-mars-hirise-dtms/   # cloud-optimised copy (COG/STAC)
+        license: US public domain (per data.gov catalogue)
+        status: verified
+      - name: HRSC + MOLA blended DEM (regional fallback, 200 m)
+        pages: ["https://astrogeology.usgs.gov/  (search 'HRSC and MOLA Blended DEM 200m')"]
+        status: to-confirm
+      - name: 30 m HRSC DTM mosaic of Gale crater (community product, Persaud et al.)
+        pages: ["https://zenodo.org/record/5808354"]
+        format: GeoTIFF
+        status: verified
+    resolution_m: TODO
+
+  - id: SPEC
+    name: Hydrated-mineral index (spectral)
+    brief_type: spectral
+    feeds: science value of stops
+    sources:
+      - name: CRISM MTRDR (targeted, map-projected) - best for a single site
+        pds4_bundle: urn:nasa:pds:mro_crism_mtrdr
+        pages:
+          - https://pds-geosciences.wustl.edu/missions/mro/crism.htm
+          - https://pds.nasa.gov/data/pds4/releases/geo/mro_crism_mtrdr-20250413/readme.txt
+        note: Includes spectral summary parameters (band-math indices); pick the hydrated-mineral ones from the CRISM SIS.
+        status: verified
+      - name: CRISM MRDR (multispectral global tiles) - coverage fallback
+        pds_dataset_id: MRO-M-CRISM-5-RDR-MULTISPECTRAL-V1.0
+        pds4_bundle: urn:nasa:pds:mro_crism_mrdr
+        pages: ["https://ode.rsl.wustl.edu/mars/pagehelp/Content/Missions_Instruments/Mars%20Reconnaissance%20Orbiter%20(MRO)/CRISM/CRISM%20Product%20Primer/CRISM%20MRDR.htm"]
+        status: verified
+    resolution_m: TODO
+
+  - id: TI
+    name: Thermal inertia (thermal)
+    brief_type: thermal
+    feeds: surface hardness / rockiness, temperature range
+    sources:
+      - name: THEMIS day/night IR + derived thermal inertia (via MarsTherm)
+        pages:
+          - https://marstherm.psi.edu/
+          - https://jmars.mars.asu.edu/numeric-maps
+        note: MarsTherm can derive THEMIS thermal inertia for a user-defined area (Gale is one of its example projects).
+        status: verified
+      - name: MGS TES thermal inertia (Putzig et al.), coarse global fallback
+        pages: ["https://jmars.mars.asu.edu/numeric-maps"]
+        status: verified
+    resolution_m: TODO
+
+  - id: ROCK
+    name: Boulders / rock abundance (hazard)
+    brief_type: optical
+    feeds: blocked steps in the route engine
+    sources:
+      - name: HiRISE RDR map-projected images (count boulders / threshold shadows)
+        pds_dataset_id: MRO-M-HIRISE-3-RDR-V1.1
+        pages: ["https://ode.rsl.wustl.edu/mars/pagehelp/Content/Missions_Instruments/Mars%20Reconnaissance%20Orbiter/HiRISE/HiRISE.htm"]
+        status: verified
+      - name: Rock abundance products (IRTM / TES / THEMIS-derived)
+        note: Name the exact product after checking JMARS numeric maps; IRTM Rock Abundance is listed there.
+        pages: ["https://jmars.mars.asu.edu/numeric-maps"]
+        status: verified
+    resolution_m: TODO
+
+  - id: DOSE
+    name: Surface radiation dose rate
+    brief_type: radiation
+    feeds: dose estimate, verdict, scenario multipliers
+    sources:
+      - name: MSL RAD Reduced Data Records (surface dose rate)
+        pds_dataset_id: MSL-M-RAD-3-RDR-V1.0
+        pages:
+          - https://pds-ppi.igpp.ucla.edu/volume/MSLRAD_1002/DOCUMENT/RAD_RDR_SIS.HTM
+          - https://search-pdsppi.igpp.ucla.edu/search/view/?f=yes&id=pds://PPI/MSL-M-RAD-3-RDR-V1.0/DATA
+          - https://cdaweb.gsfc.nasa.gov/   # SPDF: MSL_RAD_OBS-L2
+        note: RAD is a single point in Gale. Terrain shielding (sky-view from Z) is how you vary dose across the grid.
+        status: verified
+    resolution_m: n/a (time series at one location)
+
+context_layers:
+  - id: ATMOS
+    name: Dust opacity / atmospheric temperature
+    sources: ["MRO MARCI + MCS (to-confirm product pages)", "Curiosity REMS (to-confirm PDS/ATM node page)"]
+    feeds: dust tau, ambient temperature curve (replaces the placeholder formula)
+    status: to-confirm
+  - id: SPACEWX
+    name: Space weather / SEP events
+    sources: ["MAVEN SEP (to-confirm)", "MSL RAD event data (see DOSE)"]
+    status: to-confirm
+  - id: GEOLOGY
+    name: USGS-NASA geologic map of Mars
+    sources: ["USGS-NASA Planetary Geologic Mapping Program (named in project docs; confirm URL)"]
+    status: to-confirm
+  - id: BASEMAP
+    name: Mars Trek WMTS tiles (basemap, quick previews)
+    pages: ["https://api.nasa.gov/mars-wmts/catalog"]
+    note: Tile URL pattern .../{style}/{tileMatrixSet}/{tileMatrix}/{tileRow}/{tileCol}.png. Good for the UI basemap; use PDS/AWS files for analysis.
+    status: verified
+  - id: POV
+    name: Rover surface imagery (Mastcam / Navcam) for stop views
+    sources: ["NASA Mars rover raw images (project docs list the Perseverance gallery; add Curiosity raw images)"]
+    status: to-confirm
+
+still_missing:
+  - EVA / suit numbers (walking speed, time limits, temperature limits) - not NASA data we have found yet.

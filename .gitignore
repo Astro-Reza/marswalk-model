@@ -1,0 +1,7 @@
+data/raw/
+data/processed/
+*.IMG
+*.img
+*.tif
+*.lbl
+__pycache__/
