@@ -1,0 +1,15 @@
+# Tested together on Python 3.11 (MyoSuite 3.1 and DEP-RL need numpy < 2).
+myosuite==3.1.0
+mujoco==3.17.0
+deprl==0.5.0
+gymnasium==1.2.3
+numpy==1.26.4
+scipy==1.17.1
+pandas==2.3.3
+pyarrow==17.0.0
+scikit-learn==1.9.1
+joblib==1.6.0
+fsspec==2026.9.0
+gcsfs==2026.10.1
+gdown==5.2.2
+pytest==9.2.0

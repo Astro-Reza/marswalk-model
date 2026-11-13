@@ -1,0 +1,31 @@
+{
+  "taskGroups": [
+    {
+      "taskSpec": {
+        "runnables": [
+          {
+            "container": {
+              "imageUri": "__IMAGE__",
+              "entrypoint": "python",
+              "commands": __COMMANDS__
+            }
+          }
+        ],
+        "volumes": [
+          { "gcs": { "remotePath": "__BUCKET__" }, "mountPath": "/mnt/disks/out" }
+        ],
+        "computeResource": { "cpuMilli": 2000, "memoryMib": 4096 },
+        "maxRetryCount": 2,
+        "maxRunDuration": "21600s"
+      },
+      "taskCount": __TASKS__,
+      "parallelism": __PARALLEL__
+    }
+  ],
+  "allocationPolicy": {
+    "instances": [
+      { "policy": { "machineType": "__MACHINE__", "provisioningModel": "__PROVISIONING__" } }
+    ]
+  },
+  "logsPolicy": { "destination": "CLOUD_LOGGING" }
+}
