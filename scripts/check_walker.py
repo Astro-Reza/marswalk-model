@@ -1,7 +1,8 @@
 #!/usr/bin/env python
 """Run this first on Google Cloud, before any big job.
 
-Stages, each run `--repeats` times on smooth ground:
+Stages, each run `--repeats` times on smooth ground (each repeat starts from a
+slightly different pose, so the repeats are not copies of each other):
   1. flat, Earth gravity, no suit      -> does the walker walk at all?
   2. flat, Mars gravity, no suit       -> does it survive 0.38 g?
   3. flat, Mars gravity, 40 kg suit    -> does it survive the pack?
@@ -18,10 +19,11 @@ import json
 import sys
 from pathlib import Path
 
-import numpy as np
-import pandas as pd
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+import marswalk_sim  # noqa: E402,F401  (first: on Windows it must load MuJoCo before pandas)
+import numpy as np  # noqa: E402
+import pandas as pd  # noqa: E402
 
 from marswalk_sim import config as C  # noqa: E402
 from marswalk_sim.runner import rollout  # noqa: E402
@@ -48,7 +50,7 @@ def run(menv, policy, opts, gravity, suit, grade, repeats, tag):
                      "status": row.get("status"), "fell": bool(row.get("fell")),
                      "distance_m": row.get("distance_m"), "speed_mps": row.get("speed_mps"),
                      "cot_gross": row.get("cot_gross_J_per_kg_m"), "cot_net": row.get("cot_net_J_per_kg_m"),
-                     "mos_ml_min_m": row.get("mos_ml_min_m")})
+                     "mos_ml_min_m": row.get("mos_ml_min_m"), "fall_reason": row.get("fall_reason", "")})
         print(f"  {tag} grade={grade:+.2f} rep={r}: status={rows[-1]['status']} fell={rows[-1]['fell']} "
               f"dist={rows[-1]['distance_m']} cot={rows[-1]['cot_gross']}", flush=True)
     return rows
@@ -111,11 +113,16 @@ def main() -> None:
             f"flat Earth walked {st['1_flat_earth']['walked']}/{st['1_flat_earth']['runs']}, "
             f"flat Mars {st['2_flat_mars']['walked']}/{st['2_flat_mars']['runs']}, "
             f"Mars + suit {st['3_flat_mars_suit']['walked']}/{st['3_flat_mars_suit']['runs']}")
+        # worth generating only if the walker gets across the flat patch in the planner's conditions
+        result["ready_to_generate"] = bool(2 * st["1_flat_earth"]["walked"] > st["1_flat_earth"]["runs"]
+                                           and 2 * st["3_flat_mars_suit"]["walked"] > st["3_flat_mars_suit"]["runs"])
     result["minetti_reference"] = {f"{g:+.2f}": round(minetti_walk(g), 3) for g in GRADES}
     result["runs"] = rows
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(result, indent=2, default=str))
+    result.setdefault("ready_to_generate", False)
     print("VERDICT:", result.get("verdict"))
+    print("READY TO GENERATE:", result["ready_to_generate"])
     print(f"wrote {out_path}")
 
 

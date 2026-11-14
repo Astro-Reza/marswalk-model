@@ -87,11 +87,25 @@ def place_heightfield(m, d, tid: int, hid: int, hf: Heightfield, frame: Frame, f
         m.geom_aabb[tid] = [0.0, 0.0, (zr - base) / 2, half_x, half_y, (zr + base) / 2]
     except AttributeError:  # older MuJoCo without geom_aabb
         pass
-    m.geom_friction[tid, 0] = friction
+    set_terrain_friction(m, tid, friction)
     m.geom_rgba[tid, 3] = 1.0
     m.geom_contype[tid] = 1
     m.geom_conaffinity[tid] = 1
     refresh_static_bvh(m, tid)
+
+
+def set_terrain_friction(m, tid: int, friction: float) -> None:
+    """Make `friction` the sliding friction of every contact with the terrain.
+
+    MuJoCo uses the larger of the two geoms' friction when both have the same
+    priority. The foot geoms have friction 1.0, so a terrain value below 1.0
+    would be ignored. Giving the terrain the highest priority makes MuJoCo take
+    the terrain's contact settings (friction, solref, solimp, condim) instead.
+    """
+    m.geom_friction[tid, 0] = float(friction)
+    others = np.delete(np.asarray(m.geom_priority), tid)
+    m.geom_priority[tid] = int(others.max()) + 1 if len(others) else 1
+    m.geom_condim[tid] = max(int(m.geom_condim[tid]), 3)  # condim 1 would be frictionless
 
 
 def refresh_static_bvh(m, tid: int) -> None:
@@ -117,10 +131,21 @@ def refresh_static_bvh(m, tid: int) -> None:
             m.bvh_aabb[i] = [0, 0, 0, 1e9, 1e9, 1e9]   # inner nodes: never cull on stale bounds
 
 
-def ground_z(hf: Heightfield, s: float, lat: float) -> float:
-    i = int(np.clip(np.searchsorted(hf.s, s), 1, len(hf.s) - 1))
-    j = int(np.clip(np.searchsorted(hf.x, lat), 1, len(hf.x) - 1))
-    return float(hf.z[i, j])
+def ground_z(hf: Heightfield, s, lat):
+    """Terrain height at (s, lat), bilinear between grid posts (clamped at the edges).
+
+    Scalars give a float, arrays give an array.
+    """
+    s_a, lat_a = np.asarray(s, dtype=float), np.asarray(lat, dtype=float)
+    fi = np.clip((s_a - hf.s[0]) / (hf.s[1] - hf.s[0]), 0.0, len(hf.s) - 1.0)
+    fj = np.clip((lat_a - hf.x[0]) / (hf.x[1] - hf.x[0]), 0.0, len(hf.x) - 1.0)
+    i0 = np.minimum(fi.astype(int), len(hf.s) - 2)
+    j0 = np.minimum(fj.astype(int), len(hf.x) - 2)
+    a, b = fi - i0, fj - j0
+    z = hf.z
+    out = ((1 - a) * (1 - b) * z[i0, j0] + a * (1 - b) * z[i0 + 1, j0]
+           + (1 - a) * b * z[i0, j0 + 1] + a * b * z[i0 + 1, j0 + 1])
+    return float(out) if out.ndim == 0 else out
 
 
 def set_const_keep_state(m, d) -> None:

@@ -9,7 +9,8 @@
 #
 # WALKER=myoleg-deprl (default) or WALKER=kinesis picks the walker and its image.
 # Optional: REGION (default asia-southeast1), RUN_ID, TASKS (default 50), PARALLEL (25),
-#           MAPS_PER_TASK (4), PATCHES_PER_MAP (8), MACHINE (e2-standard-2), SPOT (true)
+#           MAPS_PER_TASK (4), PATCHES_PER_MAP (8), MACHINE (e2-standard-2), SPOT (true),
+#           SEED (default: derived from RUN_ID, so every run gets different patches)
 set -euo pipefail
 
 : "${PROJECT:?set PROJECT}"
@@ -21,6 +22,9 @@ IMAGE_MYOLEG="${REGION}-docker.pkg.dev/${PROJECT}/${REPO}/sim:latest"
 IMAGE_KINESIS="${REGION}-docker.pkg.dev/${PROJECT}/${REPO}/sim-kinesis:latest"
 IMAGE=$([[ "$WALKER" == "kinesis" ]] && echo "$IMAGE_KINESIS" || echo "$IMAGE_MYOLEG")
 RUN_ID="${RUN_ID:-run-$(date +%Y%m%d-%H%M%S)}"
+# The seed decides which patches a run simulates. Two runs with the same seed
+# would produce the same rows, so by default it follows the run name.
+SEED="${SEED:-$(printf '%s' "$RUN_ID" | cksum | cut -d' ' -f1)}"
 TASKS="${TASKS:-50}"
 PARALLEL="${PARALLEL:-25}"
 MAPS_PER_TASK="${MAPS_PER_TASK:-4}"
@@ -63,11 +67,12 @@ case "${1:-}" in
     echo "Result: gs://$BUCKET/checks/${name}.json  (logs: Cloud Logging, job $name)"
     ;;
   generate)
-    cmds="[\"scripts/generate.py\", \"--out\", \"/mnt/disks/out/runs/${RUN_ID}\", \"--num-maps\", \"${MAPS_PER_TASK}\", \"--patches-per-map\", \"${PATCHES_PER_MAP}\", \"--walker\", \"${WALKER}\"]"
+    cmds="[\"scripts/generate.py\", \"--out\", \"/mnt/disks/out/runs/${RUN_ID}\", \"--num-maps\", \"${MAPS_PER_TASK}\", \"--patches-per-map\", \"${PATCHES_PER_MAP}\", \"--walker\", \"${WALKER}\", \"--seed\", \"${SEED}\"]"
     job=$(make_job "$RUN_ID" "$cmds" "$TASKS" "$PARALLEL")
     gcloud batch jobs submit "$RUN_ID" --location "$REGION" --config "$job"
-    echo "Data: gs://$BUCKET/runs/${RUN_ID}  ($((TASKS * MAPS_PER_TASK * PATCHES_PER_MAP)) patches)"
+    echo "Data: gs://$BUCKET/runs/${RUN_ID}  ($((TASKS * MAPS_PER_TASK * PATCHES_PER_MAP)) patches, seed ${SEED})"
+    echo "When the job is done: python scripts/validate.py --data gs://$BUCKET/runs/${RUN_ID}"
     ;;
   *)
-    sed -n '2,12p' "$0"; exit 1 ;;
+    sed -n '2,13p' "$0"; exit 1 ;;
 esac
