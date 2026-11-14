@@ -69,3 +69,27 @@ def test_patch_xml_with_include(tmp_path):
     for _ in range(1000):
         mujoco.mj_step(m, d)
     assert d.qpos[2] > 0.8
+
+
+def test_terrain_far_from_compile_position_collides(tmp_path):
+    """The terrain is compiled at z = -10; after placement a falling body must still land on it."""
+    xml = """<mujoco><option timestep="0.002"/><worldbody>
+      <geom name="floor" type="plane" size="20 20 .1" contype="1" conaffinity="1"/>
+      <geom type="box" size="0.1 0.1 0.1" pos="30 30 5" contype="1" conaffinity="1"/>
+      <body name="b" pos="0 0 0.5"><freejoint/>
+        <geom type="capsule" size="0.03 0.05" contype="1" conaffinity="0" mass="1"/></body>
+      </worldbody></mujoco>"""
+    src = tmp_path / "m.xml"
+    src.write_text(xml)
+    m = mujoco.MjModel.from_xml_path(patch_xml(str(src)))
+    d = mujoco.MjData(m)
+    info = prepare_terrain_model(m)
+    p = PatchParams(gravity=9.81, friction=1.0, map_id="t", patch_id="t", seed=1)
+    hf = build_heightfield(p, int(m.hfield_nrow[info["hfield"]]), int(m.hfield_ncol[info["hfield"]]), flat_start=3.0)
+    mujoco.mj_resetData(m, d)
+    d.qpos[:2] = [-6.0, 4.0]
+    place_heightfield(m, d, info["terrain_geom"], info["hfield"], hf, Frame((0.0, 0.0), axis=0, sign=-1), 1.0)
+    mujoco.mj_forward(m, d)
+    for _ in range(400):
+        mujoco.mj_step(m, d)
+    assert d.qpos[2] > -0.01 and d.ncon > 0, (d.qpos[2], d.ncon)
