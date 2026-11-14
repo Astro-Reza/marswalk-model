@@ -25,7 +25,7 @@ import mujoco
 import numpy as np
 
 from marswalk_sim.env import FOOT_BODIES, apply_pack, foot_contacts, foot_positions
-from marswalk_sim.placement import Frame, ground_z, place_heightfield
+from marswalk_sim.placement import Frame, ground_z, place_heightfield, set_const_keep_state
 from marswalk_sim.terrain import Heightfield, PatchParams
 
 KINESIS_DIR = os.environ.get("KINESIS_DIR", "/opt/kinesis")
@@ -226,8 +226,7 @@ class KinesisMarsEnv:
         self.m.opt.gravity[:] = [0.0, 0.0, -float(p.gravity)]
         place_heightfield(self.m, self.d, self.tid, self.hid, hf, self.frame, p.friction)
         apply_pack(self.m, self.d, self.pack_body, self._orig, p, self.frame)
-        mujoco.mj_setConst(self.m, self.d)
-        mujoco.mj_forward(self.m, self.d)
+        set_const_keep_state(self.m, self.d)
         self.kenv.mars_hf, self.kenv.mars_frame = hf, self.frame
         self.hf = hf
         return self.kenv.compute_observations()
