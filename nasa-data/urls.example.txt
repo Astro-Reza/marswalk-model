@@ -1,4 +1,4 @@
-# Copy to data/urls.txt and fill in real file URLs found via the product pages in manifest.yaml.
+# Copy to nasa-data/urls.txt and fill in real file URLs found via the product pages in manifest.yaml.
 # <layer_id> <direct file url>
 # Z    https://example.invalid/path/to/HiRISE_DTM.IMG
 # SPEC https://example.invalid/path/to/CRISM_summary.IMG
