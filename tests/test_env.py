@@ -18,7 +18,8 @@ def menv():
 
 def ray_ground(menv, s, x):
     """Height of the terrain geom under (s, x), found with a downward ray."""
-    pnt = np.array([x, menv.forward * s, 50.0])
+    w = menv.frame.world(s, x)
+    pnt = np.array([w[0], w[1], 50.0])
     vec = np.array([0.0, 0.0, -1.0])
     dist = mujoco.mj_rayHfield(menv.m, menv.d, menv.tid, pnt, vec)
     assert dist >= 0, "ray did not hit the terrain"
@@ -35,7 +36,7 @@ def test_heights_match(menv, slope):
         for x in (-3.0, 2.5):
             want = menv.ground_z(s, x)
             got = ray_ground(menv, s, x)
-            assert abs(got - want) < 0.08 + 0.2 * abs(np.tan(np.radians(slope))), (s, x, got, want)
+            assert abs(got - want) < 0.03 + 0.17 * abs(np.tan(np.radians(slope))), (s, x, got, want)
 
 
 def test_start_is_flat_and_at_zero(menv):

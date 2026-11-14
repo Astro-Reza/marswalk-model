@@ -51,14 +51,15 @@ def _ramp(s: np.ndarray, start: float, width: float) -> np.ndarray:
     return u * u * (3 - 2 * u)
 
 
-def build_heightfield(p: PatchParams, n_s: int = 100, n_x: int = 100) -> Heightfield:
+def build_heightfield(p: PatchParams, n_s: int = 100, n_x: int = 100,
+                      flat_start: float = C.FLAT_START_M) -> Heightfield:
     rng = np.random.default_rng(p.seed)
     s = np.linspace(-C.BACK_MARGIN_M, 2 * C.HF_HALF_LENGTH_M - C.BACK_MARGIN_M, n_s)
     x = np.linspace(-C.HF_HALF_WIDTH_M, C.HF_HALF_WIDTH_M, n_x)
     S, X = np.meshgrid(s, x, indexing="ij")
     ds, dx = s[1] - s[0], x[1] - x[0]
 
-    s0 = C.FLAT_START_M
+    s0 = flat_start
     w = _ramp(S, s0, C.BLEND_M)  # terrain features fade in after the run-in
 
     # 1) slope along the walking direction, continuous at s0
@@ -85,7 +86,7 @@ def build_heightfield(p: PatchParams, n_s: int = 100, n_x: int = 100) -> Heightf
         r = max(1.5 * h, 0.12)
         z += h * np.exp(-((S - rs) ** 2 + (X - rx) ** 2) / (2 * r * r))
 
-    meta = {"n_rocks": int(n_rocks)}
+    meta = {"n_rocks": int(n_rocks), "flat_start_m": float(s0)}
     return Heightfield(s=s, x=x, z=z, meta=meta)
 
 
@@ -132,7 +133,7 @@ def patch_stats(hf: Heightfield) -> dict:
     These are what the planner can compute from a real DTM, so the surrogate
     model should be trained on them (not only on the generator's knobs).
     """
-    m = hf.s >= C.FLAT_START_M + C.BLEND_M
+    m = hf.s >= hf.meta.get("flat_start_m", C.FLAT_START_M) + C.BLEND_M
     z = hf.z[m]
     ds = hf.s[1] - hf.s[0]
     dx = hf.x[1] - hf.x[0]

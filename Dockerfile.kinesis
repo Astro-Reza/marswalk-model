@@ -1,0 +1,40 @@
+# Image for the KINESIS walker (Python 3.8, MuJoCo 3.1.2, torch 1.13 CPU).
+# Build: bash gcp/submit.sh build-kinesis
+FROM python:3.8-slim
+
+ARG KINESIS_COMMIT=bfee51db8207c6f494a278acc04094b59f3d4fad
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    KINESIS_DIR=/opt/kinesis \
+    KINESIS_MODEL=legs
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git build-essential libgl1 libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+# KINESIS source, pinned
+RUN git clone https://github.com/amathislab/kinesis "$KINESIS_DIR" \
+    && git -C "$KINESIS_DIR" checkout "$KINESIS_COMMIT"
+WORKDIR /opt/kinesis
+
+# CPU PyTorch matching the KINESIS README (1.13.1); torchvision pinned so CLIP
+# does not pull a newer torch.
+RUN pip install torch==1.13.1+cpu torchvision==0.14.1+cpu \
+        --extra-index-url https://download.pytorch.org/whl/cpu
+# chumpy's setup imports numpy/pip, so it needs numpy first and no build isolation
+RUN pip install numpy==1.21.6 && pip install --no-build-isolation chumpy==0.70
+RUN pip install -r requirements.txt
+RUN pip install huggingface_hub pyarrow==12.0.1 pytest
+
+# Model XMLs/assets (branch kinesis-2.0) and pretrained policies from Hugging Face.
+# No AMASS/KIT motion data and no SMPL model are needed for directional control.
+RUN python src/utils/download_assets.py --branch kinesis-2.0 \
+    && python src/utils/download_models.py \
+    && find data/trained_models -name "*.pth" | head -20
+
+COPY . /app
+WORKDIR /app
+RUN python -m pytest -q tests/test_placement.py -p no:cacheprovider
+
+ENTRYPOINT ["python"]
+CMD ["scripts/check_walker.py", "--walker", "kinesis", "--help"]
