@@ -74,3 +74,17 @@ def test_feet_touch_terrain(menv):
         f = menv.foot_contacts()
         seen = max(seen, f["r"] + f["l"])
     assert seen > 0.3 * menv.total_mass() * C.G_EARTH
+
+
+def test_reset_keeps_walker_pose(menv):
+    """mj_setConst must not move the walker back to qpos0 (regression)."""
+    import mujoco
+    from marswalk_sim.placement import set_const_keep_state
+
+    menv.env.reset(seed=0)
+    q = menv.d.qpos.copy()
+    mujoco.mj_setConst(menv.m, menv.d)
+    assert not np.allclose(q, menv.d.qpos)  # the raw call does disturb the pose
+    menv.d.qpos[:] = q
+    set_const_keep_state(menv.m, menv.d)
+    assert np.allclose(q, menv.d.qpos)

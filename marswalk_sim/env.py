@@ -18,7 +18,7 @@ import mujoco
 import numpy as np
 
 from . import config as C
-from .placement import Frame, ground_z, place_heightfield
+from .placement import Frame, ground_z, place_heightfield, set_const_keep_state
 from .terrain import Heightfield, PatchParams
 
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -112,8 +112,7 @@ class MarsPatchEnv:
         self.m.opt.gravity[:] = [0.0, 0.0, -float(p.gravity)]
         place_heightfield(self.m, self.d, self.tid, self.hid, hf, self.frame, p.friction)
         apply_pack(self.m, self.d, self.pack_body, self._orig, p, self.frame)
-        mujoco.mj_setConst(self.m, self.d)
-        mujoco.mj_forward(self.m, self.d)
+        set_const_keep_state(self.m, self.d)
         self.hf, self.params = hf, p
         return obs
 

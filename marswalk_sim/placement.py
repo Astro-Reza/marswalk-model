@@ -7,6 +7,7 @@ axis 90 degrees from it. Python 3.8 compatible (used by the KINESIS backend).
 """
 from __future__ import annotations
 
+import mujoco
 import numpy as np
 
 from .terrain import Heightfield
@@ -96,3 +97,18 @@ def ground_z(hf: Heightfield, s: float, lat: float) -> float:
     i = int(np.clip(np.searchsorted(hf.s, s), 1, len(hf.s) - 1))
     j = int(np.clip(np.searchsorted(hf.x, lat), 1, len(hf.x) - 1))
     return float(hf.z[i, j])
+
+
+def set_const_keep_state(m, d) -> None:
+    """mj_setConst after changing masses, without losing the walker's pose.
+
+    mj_setConst uses `d` as scratch space and leaves the joint angles at qpos0,
+    so the reset pose (set by the environment) must be saved and put back.
+    """
+    saved = {k: getattr(d, k).copy() for k in ("qpos", "qvel", "act", "qacc_warmstart")}
+    t = d.time
+    mujoco.mj_setConst(m, d)
+    for k, v in saved.items():
+        getattr(d, k)[:] = v
+    d.time = t
+    mujoco.mj_forward(m, d)
