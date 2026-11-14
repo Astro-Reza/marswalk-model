@@ -108,6 +108,28 @@ Try these in order:
 2. **Fine-tune with DEP-RL**: start from the baseline and train on `myoLegRoughTerrainWalk-v0` with gravity and pack mass randomised over the ranges above (`python -m deprl.main <config.yaml>`). A GPU VM helps here.
 3. Use the **KINESIS** walker (`--walker kinesis`), or add another backend (SCONE, a MuJoCo Playground humanoid). A backend only needs the small interface described at the top of `marswalk_sim/env.py`.
 
+## Analysis interface (desktop GUI)
+
+A Qt (PySide6) app for looking at how development is going: the generated data, the trained surrogate and the walker check. It is optional and is not part of the Docker images.
+
+```bash
+pip install -r requirements.txt -r requirements-gui.txt
+python -m marswalk_gui                       # then use the tabs, or pass paths:
+python -m marswalk_gui --data data/run-001 --model models/run-001 --check check_walker.json
+```
+
+| Tab | What it shows |
+|---|---|
+| Dataset | Folder of `part-*.parquet` (local or `gs://`): status counts, fall rate, Mars vs Earth check rows, column fill rates, rows |
+| Explorer | Scatter, binned mean or histogram of any numeric column, coloured by outcome or a column; filters for status, falls, planet |
+| Terrain patch | Build a patch with `marswalk_sim.terrain` from the sampling knobs and see the height map, centre-line profile and the DTM-style stats the model gets |
+| Model runs | Add one or more `scripts/train.py` output folders; compares test scores, flags small test sets and train/test gaps; predicted vs simulated on the held-out maps |
+| What-if | Move the 11 model features and read cost, fall probability and margin of stability, with slope sweeps against Minetti 2002 |
+| Planner lookup | The `planner_lookup_mars.json` grid as heat map and curves |
+| Walker check | `check_walker.json`: stage table, verdict, cost by grade vs Minetti |
+
+**Load synthetic demo** (Dataset tab) writes made-up labels from a Pandolf-like formula and trains on them, so you can try the app without a walking policy. A banner marks the demo; it is not simulation output and not Mars measurements.
+
 ## Layout
 
 ```
@@ -127,7 +149,8 @@ scripts/
   train.py      grouped split, gradient boosting, metrics, planner lookup
 gcp/            Batch job template + submit.sh
 Dockerfile      MyoLeg / DEP-RL image      Dockerfile.kinesis   KINESIS image
-tests/          env and training tests (also run during the Docker build)
+marswalk_gui/   analysis interface (core.py has the Qt-free logic, app.py the windows)
+tests/          env, training and GUI tests (also run during the Docker build)
 ```
 
 ## Next steps

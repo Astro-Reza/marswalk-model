@@ -1,0 +1,4 @@
+# Only for the desktop analysis interface (python -m marswalk_gui). Not needed for the simulation images.
+# Install next to requirements.txt (numpy, scipy, pandas, pyarrow, scikit-learn, joblib, fsspec).
+PySide6-Essentials>=6.7
+matplotlib>=3.8
