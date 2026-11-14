@@ -91,6 +91,30 @@ def place_heightfield(m, d, tid: int, hid: int, hf: Heightfield, frame: Frame, f
     m.geom_rgba[tid, 3] = 1.0
     m.geom_contype[tid] = 1
     m.geom_conaffinity[tid] = 1
+    refresh_static_bvh(m, tid)
+
+
+def refresh_static_bvh(m, tid: int) -> None:
+    """Update MuJoCo's cached bounding-box tree of the world body for the moved terrain.
+
+    MuJoCo builds a bounding-volume tree for static (world) geoms when the model
+    is compiled and does not refresh it at run time. Moving or resizing the
+    terrain by editing geom_pos / hfield_size leaves the old box in the tree, and
+    collisions with the terrain are then skipped. Newer/older MuJoCo versions
+    without the tree are left alone.
+    """
+    if not hasattr(m, "bvh_aabb") or int(getattr(m, "nbvh", 0)) == 0:
+        return
+    adr, num = int(m.body_bvhadr[0]), int(m.body_bvhnum[0])
+    if num <= 0:
+        return
+    box = np.concatenate([m.geom_pos[tid] + m.geom_aabb[tid][:3], m.geom_aabb[tid][3:]])
+    for i in range(adr, adr + num):
+        nid = int(m.bvh_nodeid[i])
+        if nid == tid:
+            m.bvh_aabb[i] = box              # the terrain leaf: its true current box
+        elif nid < 0:
+            m.bvh_aabb[i] = [0, 0, 0, 1e9, 1e9, 1e9]   # inner nodes: never cull on stale bounds
 
 
 def ground_z(hf: Heightfield, s: float, lat: float) -> float:
