@@ -55,9 +55,9 @@ def test_load_dataset_empty_folder(tmp_path):
 
 def test_load_run_and_compare(demo):
     run = core.load_run(demo[2])
-    assert set(run.models) == {"cot", "fall", "mos"} and run.lookup and run.split["test"]
+    assert set(run.models) == {"cot", "fall", "mos", "speed"} and run.lookup and run.split["test"]
     table = core.compare_table([run])
-    assert set(table["target"]) == {"cot", "fall", "mos"}
+    assert set(table["target"]) == {"cot", "fall", "mos", "speed"}
     assert table.loc[table.target == "cot", "r2_test"].iloc[0] > 0.5
     with pytest.raises(FileNotFoundError):
         core.load_run(demo[1])  # a data folder has no metrics.json

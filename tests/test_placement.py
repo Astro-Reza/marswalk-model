@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from kinesis_backend.kinesis_env import TERRAIN, patch_xml, prepare_terrain_model
-from marswalk_sim.placement import Frame, place_heightfield
+from marswalk_sim.placement import Frame, ground_z, place_heightfield
 from marswalk_sim.terrain import PatchParams, build_heightfield
 
 TINY = """
@@ -93,3 +93,53 @@ def test_terrain_far_from_compile_position_collides(tmp_path):
     for _ in range(400):
         mujoco.mj_step(m, d)
     assert d.qpos[2] > -0.01 and d.ncon > 0, (d.qpos[2], d.ncon)
+
+
+SLIDER = """
+<mujoco>
+  <option timestep="0.002"/>
+  <asset><hfield name="h" nrow="100" ncol="100" size="1 1 1 0.1"/></asset>
+  <worldbody>
+    <geom name="t" type="hfield" hfield="h"/>
+    <body name="box" pos="0 0 5"><freejoint/><geom type="box" size="0.15 0.15 0.05" mass="5" friction="1"/></body>
+  </worldbody>
+</mujoco>
+"""
+
+
+@pytest.mark.parametrize("friction,slides", [(0.2, True), (0.8, False)])
+def test_terrain_friction_decides_sliding(friction, slides):
+    """A box with friction 1.0 on a 20 deg slope (tan = 0.36) must slide only on low-friction terrain.
+
+    MuJoCo takes the larger friction of two geoms of equal priority, so without
+    the terrain's raised priority the box would never slide.
+    """
+    m = mujoco.MjModel.from_xml_string(SLIDER)
+    d = mujoco.MjData(m)
+    tid = m.geom("t").id
+    hf = build_heightfield(PatchParams(slope_deg=20.0, seed=1), 100, 100)
+    fr = Frame((0.0, 0.0), axis=1, sign=1)
+    place_heightfield(m, d, tid, int(m.geom_dataid[tid]), hf, fr, friction=friction)
+    start = fr.world(8.0, 0.0)
+    d.qpos[:3] = [start[0], start[1], ground_z(hf, 8.0, 0.0) + 0.08]
+    d.qpos[3:7] = [np.cos(np.radians(10)), np.sin(np.radians(10)), 0, 0]  # lie on the slope (rise along +y)
+    for _ in range(250):
+        mujoco.mj_step(m, d)
+    s0 = fr.s_of(d.qpos[:3])
+    used = set()
+    for _ in range(750):
+        mujoco.mj_step(m, d)
+        used |= {round(float(d.contact[i].friction[0]), 3) for i in range(d.ncon)}
+    moved = s0 - fr.s_of(d.qpos[:3])  # downhill is toward smaller s
+    assert (moved > 0.3) if slides else (abs(moved) < 0.05), moved
+    assert used == {friction}
+
+
+def test_ground_z_is_bilinear():
+    hf = build_heightfield(PatchParams(slope_deg=20.0, cross_slope_deg=6.0, seed=1), 100, 100)
+    s, lat = 7.03, 1.11   # between grid posts, on the planar part of the patch
+    want = np.tan(np.radians(20.0)) * (s - 1.0) + np.tan(np.radians(6.0)) * lat
+    assert ground_z(hf, s, lat) == pytest.approx(want, abs=1e-6)
+    many = ground_z(hf, np.array([s, 3.0]), np.array([lat, 0.0]))
+    assert many.shape == (2,) and many[0] == pytest.approx(want, abs=1e-6)
+    assert ground_z(hf, 1e3, 1e3) == pytest.approx(hf.z[-1, -1])  # clamped outside the grid

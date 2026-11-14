@@ -6,12 +6,26 @@ Wraps a MyoSuite leg-walking env and, on every reset, overwrites:
   * terrain friction,
   * torso mass / COM / inertia to carry a suit + PLSS pack.
 
+MyoSuite measures heights from z = 0: the fall check (centre of mass below
+0.8 m) and three observation entries (pelvis height, centre-of-mass height,
+foot heights). On a slope that calls a walker fallen as soon as the ground has
+dropped 0.2 m, never calls it fallen once the ground has risen, and feeds the
+policy heights it never saw in training. This wrapper measures all of them from
+the terrain under the body instead. On flat ground nothing changes.
+
 Any walker backend (see kinesis_backend/) exposes the same interface:
 reset(p, hf), step(a), dt, frame, nrow, ncol, human_mass, total_mass(), com(),
 foot_contacts(), foot_positions(), muscle_power(), act(), ground_z(s, lat).
+Optional: fall_reason() -> str, used to label why a rollout terminated.
+
+MARSWALK_ARENA_MB caps MuJoCo's contact arena for the MyoLeg model. The model
+asks for several GB by default, which fails to allocate on a small or busy
+Windows machine; 256 is plenty for walking.
 """
 from __future__ import annotations
 
+import contextlib
+import os
 import warnings
 
 import mujoco
@@ -29,6 +43,28 @@ FOOT_BODIES = {"r": ("calcn_r", "toes_r"), "l": ("calcn_l", "toes_l")}
 # negated MuJoCo cvel, so the walker heads toward world -y. calibrate() checks
 # this with the real policy and overrides it if needed.
 DEFAULT_FORWARD_SIGN = -1
+
+
+@contextlib.contextmanager
+def _arena_cap(megabytes: int):
+    """Compile MyoSuite models with a fixed arena size (see MARSWALK_ARENA_MB)."""
+    if megabytes <= 0:
+        yield
+        return
+    from myosuite.core.model_builder import ModelBuilder
+
+    orig = ModelBuilder.build_spec
+
+    def build_spec(self):
+        spec = orig(self)
+        spec.memory = megabytes << 20
+        return spec
+
+    ModelBuilder.build_spec = build_spec
+    try:
+        yield
+    finally:
+        ModelBuilder.build_spec = orig
 
 
 def apply_pack(m, d, body_id: int, orig: dict, p: PatchParams, frame: Frame) -> None:
@@ -62,7 +98,8 @@ class MarsPatchEnv:
     def __init__(self, env_id: str = C.ENV_ID, forward_sign: int = DEFAULT_FORWARD_SIGN):
         from myosuite.utils import gym  # imported here so the module loads without MyoSuite
 
-        self.env = gym.make(env_id)
+        with _arena_cap(int(os.environ.get("MARSWALK_ARENA_MB", "0") or 0)):
+            self.env = gym.make(env_id)
         self.uw = self.env.unwrapped
         self.m: mujoco.MjModel = self.uw.model
         self.d: mujoco.MjData = self.uw.data
@@ -97,6 +134,44 @@ class MarsPatchEnv:
         self.dt = float(self.uw.dt)
         self.hf: Heightfield | None = None
         self.params: PatchParams | None = None
+        self.init_joint_noise = C.INIT_JOINT_NOISE_RAD
+        self._measure_from_terrain()
+
+    def _ground_under(self, xyz) -> float:
+        if self.hf is None:
+            return 0.0
+        return ground_z(self.hf, float(self.frame.s_of(xyz)), float(self.frame.lat_of(xyz)))
+
+    def _measure_from_terrain(self) -> None:
+        """Make MyoSuite's fall check and height observations relative to the terrain."""
+        uw, d = self.uw, self.d
+        raw_height, raw_feet, raw_obs = uw._get_height, uw._get_feet_heights, uw._get_obs_dict
+        talus = [self.m.body("talus_l").id, self.m.body("talus_r").id]  # same order as MyoSuite
+
+        def height() -> float:
+            return raw_height() - self._ground_under(uw._get_com())
+
+        def feet_heights() -> np.ndarray:
+            return raw_feet() - np.array([self._ground_under(d.xpos[i]) for i in talus])
+
+        def obs_dict(accessor) -> dict:
+            obs = raw_obs(accessor)  # picks up height() and feet_heights() above
+            obs["qpos_without_xy"][0] -= self._ground_under(d.qpos[:3])  # pelvis height
+            return obs
+
+        self._raw_height = raw_height
+        uw._get_height, uw._get_feet_heights, uw._get_obs_dict = height, feet_heights, obs_dict
+
+    def fall_reason(self) -> str:
+        """Which MyoSuite termination rule holds right now ('' if none)."""
+        uw = self.uw
+        if uw._get_height() < uw.min_height:
+            return "height"
+        if uw._get_rot_condition():
+            return "turned"     # heading more than ~55 deg off the walking axis
+        if hasattr(uw, "_get_knee_condition") and uw._get_knee_condition():
+            return "crouch"     # centre of mass less than 0.61 m above the feet
+        return ""
 
     # the walking direction along y; generate.calibrate() may flip it
     @property
@@ -108,13 +183,21 @@ class MarsPatchEnv:
         self.frame = Frame((0.0, 0.0), axis=1, sign=int(sign))
 
     def reset(self, p: PatchParams, hf: Heightfield) -> np.ndarray:
-        obs, _ = self.env.reset(seed=int(p.seed) % (2**31 - 1))
+        uw = self.uw
+        self.hf = None  # MyoSuite resets onto its own flat terrain at z = 0
+        self.env.reset(seed=int(p.seed) % (2**31 - 1))
+        if self.init_joint_noise > 0:
+            rng = np.random.default_rng([int(p.seed) % (2**31 - 1), 7])
+            self.d.qpos[7:] += rng.normal(0.0, self.init_joint_noise, size=self.m.nq - 7)
+            uw._project_joint_couplings()
         self.m.opt.gravity[:] = [0.0, 0.0, -float(p.gravity)]
         place_heightfield(self.m, self.d, self.tid, self.hid, hf, self.frame, p.friction)
         apply_pack(self.m, self.d, self.pack_body, self._orig, p, self.frame)
         set_const_keep_state(self.m, self.d)
         self.hf, self.params = hf, p
-        return obs
+        # the observation MyoSuite returned was taken before the patch was applied
+        obs = uw._obs_dict_to_vec(uw._get_obs_dict(uw._accessor))
+        return uw._ensure_obs_gymnasium_compliant(obs)
 
     def step(self, action):
         return self.env.step(action)

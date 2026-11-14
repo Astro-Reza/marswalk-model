@@ -26,8 +26,10 @@ COPY tests ./tests
 # Google Drive download limits.
 RUN python -c "from marswalk_sim.policies import ensure_deprl_weights; ensure_deprl_weights()"
 
-# Fail the build early if the env or patch code is broken.
-RUN python -m pytest -q tests -p no:cacheprovider
+# Fail the build early if the env or patch code is broken. The GUI is not in
+# this image, so its tests are left out.
+RUN python -m pytest -q tests -p no:cacheprovider \
+    --ignore=tests/test_gui_core.py --ignore=tests/test_gui_smoke.py
 
 ENTRYPOINT ["python"]
 CMD ["scripts/generate.py", "--help"]

@@ -12,11 +12,39 @@ A muscle-driven human leg model (MyoLeg, 80 muscles) walks across short Mars ter
 Each run on a patch is turned into labels such as energy cost, falls and stability. A gradient-boosted model then learns *terrain + suit → step cost*, and the Marswalk route planner uses it in place of the hand-made Pandolf + risk formula.
 
 ```
-generate patches ──► simulate walker ──► labels ──► split by map ──► train surrogate ──► planner lookup
- (terrain.py)         (env.py, runner.py)            (train.py)       (train.py)          (planner_lookup_mars.json)
+generate patches ──► simulate walker ──► labels ──► quality gate ──► split by map + train ──► planner lookup
+ (terrain.py)         (env.py, runner.py)            (validate.py)     (train.py)               (planner_lookup_mars.json)
 ```
 
 The runs use short patches instead of whole paths. A whole-path run gives one label for hundreds of steps and is wasted if the walker falls halfway. The planner already adds steps together, so it only needs a good cost per step.
+
+## The data building loop
+
+```
+check walker ─► generate a run ─► validate ─► train ─► look at it (GUI) ─► change ranges / walker ─► generate the next run
+```
+
+1. `gcp/submit.sh check`: does the walker walk at all? `ready_to_generate` in the result must be true.
+2. `gcp/submit.sh generate`: one run, with its own `RUN_ID` and its own seed (taken from the run name).
+3. `scripts/validate.py --data <run>`: pass / warn / fail checks, written to `quality.json`. Exit code 1 on a fail.
+4. `scripts/train.py --data <run> [<older run> ...] --require-quality`: trains only if the data passes.
+5. Read `quality.json` and the GUI, decide what the next run needs (more maps, other ranges, another walker), repeat.
+
+What the quality gate checks (`marswalk_sim/quality.py`):
+
+| Check | Fails or warns when |
+|---|---|
+| lineage | a `patch_id` repeats, or rows come from different `sim_version`s (labels are not comparable) |
+| rollouts | patches raised errors, few patches were reached, a shard did not finish or failed calibration |
+| walking | few Mars patches were walked without a fall; too few walked rows to train on |
+| labels | speed, cost, stride time or peak ground force outside what a walking human can do; falls the env missed |
+| features | the measured slope does not match the requested slope, or the ground under the walker does not match the patch |
+| coverage | a slope band has almost no walked rows (the cost model would extrapolate), a feature never changes, few maps |
+| Earth check | level Earth walking is far from Minetti's 2.5 J/kg/m, or cost vs slope does not follow his curve |
+
+Rows are only used for a cost / speed / stability label if the walker reached the patch, did not fall and covered at least 3 m of it. Validation and training share that rule.
+
+Do not mix data made by different `sim_version`s. Version 0.2.0 changed what `fell`, `friction` and `dtm_*` mean (see below).
 
 ## Status
 
@@ -24,9 +52,13 @@ The runs use short patches instead of whole paths. A whole-path run gives one la
 |---|---|
 | Terrain patch → MuJoCo heightfield (heights checked with ray casts, every walking axis, MuJoCo 3.17 and 3.1.2), gravity, suit mass, foot contacts | ✅ `tests/test_env.py`, `tests/test_placement.py` |
 | KINESIS XML patch (heightfield injected, floor disabled, body lands on terrain) | ✅ on a stand-in model |
-| Full generate → Parquet pipeline (with a non-walking `zero` policy) | ✅ |
+| Falls and height observations measured from the terrain, not from z = 0; patch friction reaching the foot contacts | ✅ `tests/test_env.py`, on the real MyoLeg model |
+| Labels (cost, speed, stride time, path slope, fall status) against a scripted walker with known values | ✅ `tests/test_labels.py` |
+| Full generate → Parquet → validate pipeline (with a non-walking `zero` policy) | ✅ `tests/test_pipeline.py` |
+| Quality gate: a healthy run passes, each kind of damage is caught | ✅ `tests/test_quality.py` (made-up rows) |
 | Training, grouped split, metrics, planner lookup (on synthetic labels) | ✅ `tests/test_train.py` |
 | **Either pretrained policy actually walking** | ❌ not yet. The weights come from Google Drive (DEP-RL) and Hugging Face (KINESIS), which the dev sandbox could not reach. **Run `gcp/submit.sh check` first.** |
+| KINESIS walker with the 0.2.0 changes | ❌ not yet. It shares the placement and label code but has not been run. |
 | Docker image builds | ❌ not yet. They run on Cloud Build, and each build runs the tests. |
 
 **Known risk:** both policies were trained on flat Earth ground with no suit. The DEP-RL baseline was trained in 2023 on flat ground, at Earth gravity, with no suit. It may not walk in the current MyoSuite at all. If it walks, expect many falls at Mars gravity with a 40 kg pack. `check_walker` tells you which case you are in before you spend compute. See *If the walker does not walk* below.
@@ -35,7 +67,11 @@ The runs use short patches instead of whole paths. A whole-path run gives one la
 
 slope −25…+25°, side slope ±10°, roughness amplitude 0–6 cm and wavelength 0.3–2 m, rocks (density, height), friction 0.4–1.0, gravity (Mars 3.711, plus 10 % Earth 9.81 runs as a sanity check), suit + PLSS mass 0–60 kg, pack position (up/down, behind the torso).
 
-Patches are grouped in **maps** (8 per map). Patches in one map share surface (friction, roughness, rocks) and differ in slope. The train/validation/test split is done **by map** so near-duplicate patches never leak across splits.
+Friction is the sliding friction of every foot-terrain contact. (The feet have friction 1.0 and MuJoCo uses the larger of two values, so the terrain is given priority.)
+
+The walker starts each patch from the same keyframe with a small seeded change to its joint angles (`INIT_JOINT_NOISE_RAD`, 0.005 rad), so two runs on the same smooth ground are not copies of each other.
+
+Patches are grouped in **maps** (8 per map). Patches in one map share surface (friction, roughness, rocks) and differ in slope. The train/validation/test split is done **by map** so near-duplicate patches never leak across splits. One consequence: friction, roughness and rocks only take as many values as there are maps. For the same compute, more maps with fewer patches each (`MAPS_PER_TASK`, `PATCHES_PER_MAP`) cover the surface features better.
 
 ## Labels (one Parquet row per patch)
 
@@ -43,12 +79,18 @@ Patches are grouped in **maps** (8 per map). Patches in one map share surface (f
 |---|---|
 | `cot_net_J_per_kg_m`, `cot_gross_J_per_kg_m` | cost of transport over the patch. Metabolic proxy = positive muscle work / 0.25 + negative work / 1.2 (+ 1.2 W/kg basal for gross) |
 | `met_power_net_W` | mean metabolic power proxy |
-| `fell` | centre of mass dropped below 0.8 m or the body tipped (MyoSuite termination) |
+| `fell`, `fall_reason` | MyoSuite termination, with heights measured **from the ground under the body**: centre of mass less than 0.8 m above it (`height`), less than 0.61 m above the feet (`crouch`), or heading more than ~55° off the walking axis (`turned`, which is not really a fall) |
 | `mos_ml_min_m`, `mos_ml_mean_m`, `mos_ap_mean_m` | margin of stability (Hof XCoM vs stance foot), side-to-side and fore-aft |
 | `stride_time_mean_s`, `stride_time_cv` | stride timing and variability |
 | `peak_grf_bw` | peak ground reaction force / body weight |
-| `distance_m`, `speed_mps`, `status` | `ok`, `fell_before_patch`, `too_short`, `error: …` |
-| `dtm_*` | slope and roughness **measured from the heights**, like you would from a HiRISE DTM. These are the model's terrain features. |
+| `distance_m`, `speed_mps`, `status` | `ok`, `fell_before_patch`, `too_short`, `error: …`. `distance_m` is the distance covered on the patch; `patch_length_m` is how much there was |
+| `dtm_*` | slope and roughness measured from the heights **after averaging them onto 1 m posts**, the spacing of a HiRISE DTM. These are the model's terrain features, and the planner can compute the same numbers. |
+| `fine_*` | the same on the full simulation grid (~0.15 m). Rocks and short bumps show here but not in a 1 m DTM. For analysis, not for the model. |
+| `path_slope_deg`, `path_roughness_m`, `lateral_drift_m` | the ground the walker really walked on, to check against the patch-wide features |
+| `com_height_start_m`, `com_height_min_m` | centre-of-mass height above the ground, to catch falls the env did not flag |
+| `sim_version`, `run_seed` | which code and which seed made the row |
+
+Failed patches carry the same columns, left empty.
 
 Energy is a muscle-work proxy, not a measured VO₂. Treat it as relative and calibrate it against analog EVA data.
 
@@ -73,7 +115,8 @@ WALKER=kinesis bash gcp/submit.sh check
 WALKER=kinesis TASKS=50 PARALLEL=25 bash gcp/submit.sh generate   # 50 × 4 maps × 8 patches = 1,600 patches
 ```
 
-* Each task is one shard with its own seed (`BATCH_TASK_INDEX`), so re-runs and retries never duplicate data.
+* Each task is one shard with its own seed (`BATCH_TASK_INDEX`), so retries never duplicate data. Each run gets its own seed from `RUN_ID` (or set `SEED`), so a second run adds new patches instead of repeating the first.
+* A shard stops at once (exit code 3) if the walker cannot walk on flat Earth ground, and fails (exit code 2) if more than half of its patches raised an error.
 * Output goes to `gs://$BUCKET/runs/<RUN_ID>/part-*.parquet` plus one `meta-*.json` per shard (versions, calibration).
 * Spot VMs are on by default (`SPOT=false` to turn off). Retries are set to 2.
 * One control step costs ~1 ms of CPU, so a 10 s patch is a few seconds. Scale with `TASKS`, not bigger machines.
@@ -84,11 +127,16 @@ WALKER=kinesis TASKS=50 PARALLEL=25 bash gcp/submit.sh generate   # 50 × 4 maps
 On a small VM, a Vertex AI Workbench notebook, or your laptop:
 
 ```bash
-python scripts/train.py --data gs://$BUCKET/runs/<RUN_ID> --out models/<RUN_ID>
+python scripts/validate.py --data gs://$BUCKET/runs/<RUN_ID>          # stop here if it says FAIL
+python scripts/train.py --data gs://$BUCKET/runs/<RUN_ID> --out models/<RUN_ID> --require-quality
 gcloud storage cp -r models/<RUN_ID> gs://$BUCKET/models/
 ```
 
-Outputs: `model_cot.joblib`, `model_fall.joblib`, `model_mos.joblib`, `metrics.json` (train/val/test scores), `split.json` (which maps went where), and `planner_lookup_mars.json`. The lookup is a slope × roughness grid of predicted cost and fall probability that the web Step Scorer can interpolate.
+`--data` takes several run folders, to train on everything collected so far.
+
+Outputs: `model_cot.joblib`, `model_fall.joblib`, `model_mos.joblib`, `model_speed.joblib`, `metrics.json` (train/val/test scores and the quality verdict), `split.json` (which maps went where), and `planner_lookup_mars.json`.
+
+The lookup is a slope × roughness grid the web Step Scorer can interpolate: `cot`, `speed`, `mos`, `fall` (chance of a fall over one patch of `fall_exposure_m` metres) and `fall_per_m` (the same per metre walked, which is what a planner adding steps needs). Roughness levels are quantiles of the training data, the other features are held at its medians (`fixed_features`), and `walked_slope_range_deg` says where the cost grid is backed by data.
 
 ## Run locally
 
@@ -98,8 +146,11 @@ pip install torch==2.15.0 --index-url https://download.pytorch.org/whl/cpu
 pip install -r requirements.txt
 python -m pytest -q tests
 python scripts/generate.py --out data/smoke --num-maps 1 --patches-per-map 2 --walker myoleg-zero   # pipeline check
+python scripts/validate.py --data data/smoke --no-fail                                              # FAIL is expected: zero does not walk
 python scripts/check_walker.py --walker myoleg-deprl                                                # downloads weights once
 ```
+
+If MuJoCo reports `Could not allocate memory` (the MyoLeg model asks for several GB, which a busy Windows machine may not give), set `MARSWALK_ARENA_MB=256`.
 
 ## If the walker does not walk
 
@@ -137,20 +188,23 @@ marswalk_sim/
   config.py     ranges, constants
   terrain.py    PatchParams, heightfield builder, DTM-style terrain stats
   placement.py  puts a heightfield into any MuJoCo model along ±x / ±y
-  env.py        MyoSuite wrapper: terrain, gravity, friction, pack mass; disables the flat floor
+  env.py        MyoSuite wrapper: terrain, gravity, friction, pack mass; disables the flat floor;
+                measures falls and height observations from the terrain
   policies.py   DEP-RL | zero | random controllers for the MyoSuite walker
   walkers.py    --walker name → (env, policy)
   runner.py     one rollout → labels (any walker)
+  quality.py    which rows are usable, and the checks on a whole run
 kinesis_backend/
   kinesis_env.py  KINESIS env subclass + policy wrapper (Python 3.8)
 scripts/
   generate.py   one shard → Parquet (Cloud Batch entry point)
   check_walker.py  flat Earth → flat Mars → Mars + suit → slope sweeps vs Minetti 2002
+  validate.py   quality gate between generating and training → quality.json
   train.py      grouped split, gradient boosting, metrics, planner lookup
 gcp/            Batch job template + submit.sh
 Dockerfile      MyoLeg / DEP-RL image      Dockerfile.kinesis   KINESIS image
 marswalk_gui/   analysis interface (core.py has the Qt-free logic, app.py the windows)
-tests/          env, training and GUI tests (also run during the Docker build)
+tests/          env, label, quality, pipeline, training and GUI tests (the non-GUI ones also run during the Docker build)
 ```
 
 ## Next steps

@@ -35,7 +35,9 @@ TARGET_LABELS = {
     "cot": "Net cost of transport (J/kg/m)",
     "fall": "Fall probability",
     "mos": "Min lateral margin of stability (m)",
+    "speed": "Walking speed (m/s)",
 }
+TARGET_COLUMNS = {"cot": "cot_net_J_per_kg_m", "fall": "fell", "mos": "mos_ml_min_m", "speed": "speed_mps"}
 
 
 # --------------------------------------------------------------------------- datasets
@@ -193,7 +195,7 @@ def test_predictions(run: ModelRun, df: pd.DataFrame, target: str, which: str = 
     """Actual vs predicted for the rows of the maps the run held out (`which` = train | val | test)."""
     if target not in run.models:
         raise KeyError(f"model_{target} is not loaded")
-    col = {"cot": "cot_net_J_per_kg_m", "fall": "fell", "mos": "mos_ml_min_m"}[target]
+    col = TARGET_COLUMNS[target]
     mdl, kind, feats = run.models[target]
     d = df[df["status"].eq("ok") & df["map_id"].isin(run.split.get(which, []))]
     if target != "fall":

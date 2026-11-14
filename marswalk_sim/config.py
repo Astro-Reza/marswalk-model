@@ -22,10 +22,25 @@ BLEND_M = 1.0            # distance over which slope/roughness fade in
 MAX_SIM_TIME_S = 10.0    # the registered env truncates at 1000 steps x 0.01 s
 END_MARGIN_M = 1.5       # stop when the walker is this close to the far edge
 
-# Metabolic proxy (Margaria efficiencies), see metrics.py
+# Metabolic proxy (Margaria efficiencies), see runner.py
 EFF_POSITIVE = 0.25
 EFF_NEGATIVE = 1.20
 BASAL_W_PER_KG = 1.2
+
+# Post spacing of the terrain model the planner reads (HiRISE DTMs are posted at
+# 1 m). The dtm_* features are measured after averaging the patch onto this
+# spacing, so the surrogate is trained on what the planner can really compute.
+# Finer detail is kept in the fine_* columns for analysis only.
+DTM_POST_M = 1.0
+
+# Seeded noise (rad, std) added to the walker's joint angles at reset. Without
+# it the MyoLeg start state is identical on every patch, so repeated runs on
+# smooth ground are copies of each other. Set to 0 to start from the exact keyframe.
+INIT_JOINT_NOISE_RAD = 0.005
+
+# A walked patch needs at least this much distance inside the measured region
+# for its cost / speed / stability labels to be used (about two strides).
+MIN_LABEL_DISTANCE_M = 3.0
 
 # Sampling ranges: (low, high), sampled uniformly unless stated otherwise
 RANGES = {

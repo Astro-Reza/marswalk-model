@@ -127,27 +127,52 @@ def sample_map_surface(rng: np.random.Generator) -> dict:
     }
 
 
-def patch_stats(hf: Heightfield) -> dict:
-    """Terrain descriptors measured from the heights themselves.
-
-    These are what the planner can compute from a real DTM, so the surrogate
-    model should be trained on them (not only on the generator's knobs).
-    """
-    m = hf.s >= hf.meta.get("flat_start_m", C.FLAT_START_M) + C.BLEND_M
-    z = hf.z[m]
-    ds = hf.s[1] - hf.s[0]
-    dx = hf.x[1] - hf.x[0]
-    gz_s, gz_x = np.gradient(z, ds, dx)
+def _plane_stats(s: np.ndarray, x: np.ndarray, z: np.ndarray) -> dict:
+    """Best-fit plane, residual roughness and local slope of heights z[i_s, i_x]."""
+    gz_s, gz_x = np.gradient(z, s[1] - s[0], x[1] - x[0])
     slope_mag = np.degrees(np.arctan(np.hypot(gz_s, gz_x)))
-    # roughness = std of residual after removing a best-fit plane
-    S, X = np.meshgrid(hf.s[m], hf.x, indexing="ij")
+    S, X = np.meshgrid(s, x, indexing="ij")
     A = np.c_[S.ravel(), X.ravel(), np.ones(S.size)]
     coef, *_ = np.linalg.lstsq(A, z.ravel(), rcond=None)
     resid = z.ravel() - A @ coef
+    return {"along": float(np.degrees(np.arctan(coef[0]))), "cross": float(np.degrees(np.arctan(coef[1]))),
+            "p90": float(np.percentile(slope_mag, 90)), "max": float(slope_mag.max()),
+            "rough": float(resid.std())}
+
+
+def to_dtm_posts(s: np.ndarray, x: np.ndarray, z: np.ndarray, post_m: float = C.DTM_POST_M):
+    """Average the fine grid onto ~post_m cells, like a DTM samples the real surface."""
+    ks = max(int(round(post_m / (s[1] - s[0]))), 1)
+    kx = max(int(round(post_m / (x[1] - x[0]))), 1)
+    ns, nx = len(s) // ks, len(x) // kx
+    if ns < 3 or nx < 3:
+        raise ValueError("patch is too small for the DTM post spacing")
+    zc = z[:ns * ks, :nx * kx].reshape(ns, ks, nx, kx).mean(axis=(1, 3))
+    sc = s[:ns * ks].reshape(ns, ks).mean(axis=1)
+    xc = x[:nx * kx].reshape(nx, kx).mean(axis=1)
+    return sc, xc, zc
+
+
+def patch_stats(hf: Heightfield) -> dict:
+    """Terrain descriptors measured from the heights themselves.
+
+    dtm_*  : measured at DTM post spacing (1 m). This is what the planner can
+             compute from a HiRISE DTM, so the surrogate is trained on these.
+    fine_* : measured on the full simulation grid (~0.15 m). Rocks and short
+             roughness show up here but not in a 1 m DTM; use for analysis only.
+    """
+    m = hf.s >= hf.meta.get("flat_start_m", C.FLAT_START_M) + C.BLEND_M
+    s, z = hf.s[m], hf.z[m]
+    fine = _plane_stats(s, hf.x, z)
+    dtm = _plane_stats(*to_dtm_posts(s, hf.x, z))
     return {
-        "dtm_slope_along_deg": float(np.degrees(np.arctan(coef[0]))),
-        "dtm_slope_cross_deg": float(np.degrees(np.arctan(coef[1]))),
-        "dtm_slope_p90_deg": float(np.percentile(slope_mag, 90)),
-        "dtm_slope_max_deg": float(slope_mag.max()),
-        "dtm_roughness_m": float(resid.std()),
+        "dtm_slope_along_deg": dtm["along"],
+        "dtm_slope_cross_deg": dtm["cross"],
+        "dtm_slope_p90_deg": dtm["p90"],
+        "dtm_slope_max_deg": dtm["max"],
+        "dtm_roughness_m": dtm["rough"],
+        "dtm_post_m": float(C.DTM_POST_M),
+        "fine_slope_p90_deg": fine["p90"],
+        "fine_slope_max_deg": fine["max"],
+        "fine_roughness_m": fine["rough"],
     }

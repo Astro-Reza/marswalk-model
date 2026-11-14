@@ -600,6 +600,8 @@ class WhatIfTab(QWidget):
             lines.append(f"Fall probability: <b>{pred['fall']:.0%}</b>")
         if "mos" in pred:
             lines.append(f"Min lateral margin of stability: <b>{pred['mos']:.3f}</b> m")
+        if "speed" in pred:
+            lines.append(f"Walking speed: <b>{pred['speed']:.2f}</b> m/s")
         self.out.setText("<br>".join(lines))
         slopes = np.arange(-25, 25.5, 1.0)
         sweeps = {}

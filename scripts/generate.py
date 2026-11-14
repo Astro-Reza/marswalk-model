@@ -7,6 +7,11 @@ its own BATCH_TASK_INDEX, so shards never overlap and can be re-run safely.
 
 Walkers: myoleg-deprl (default), kinesis, myoleg-zero / myoleg-random (smoke tests).
 
+A shard stops (exit code 3) when a real walker cannot walk on flat Earth
+ground, and ends with exit code 2 when more than half of its patches raised an
+error, so a broken job shows up as failed instead of filling the bucket.
+Give every run its own --seed: the same seed gives the same patches.
+
     python scripts/generate.py --out data/smoke --num-maps 1 --patches-per-map 2 --walker myoleg-zero
 """
 from __future__ import annotations
@@ -19,13 +24,14 @@ import sys
 import time
 from pathlib import Path
 
-import numpy as np
-import pandas as pd
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import marswalk_sim  # noqa: E402,F401  (first: on Windows it must load MuJoCo before pandas)
+import numpy as np  # noqa: E402
+import pandas as pd  # noqa: E402
+
 from marswalk_sim import __version__, config as C  # noqa: E402
-from marswalk_sim.runner import rollout  # noqa: E402
+from marswalk_sim.runner import empty_labels, rollout  # noqa: E402
 from marswalk_sim.terrain import PatchParams, build_heightfield, sample_map_surface, sample_params  # noqa: E402
 from marswalk_sim.walkers import WALKERS, make_walker  # noqa: E402
 
@@ -66,6 +72,8 @@ def main() -> None:
     ap.add_argument("--flush-every", type=int, default=8, help="write a part file every N patches")
     ap.add_argument("--save-traj", action="store_true", help="also save per-patch trajectories (.npz)")
     ap.add_argument("--skip-calibration", action="store_true")
+    ap.add_argument("--allow-not-walking", action="store_true",
+                    help="generate even if the walker fails the flat-Earth calibration")
     args = ap.parse_args()
 
     out = Path(args.out).resolve()
@@ -76,7 +84,9 @@ def main() -> None:
     menv, policy, opts = make_walker(args.walker, seed=shard)
 
     meta = {"shard_index": shard, "seed": args.seed, "walker": args.walker, "policy": policy.name,
-            "marswalk_sim": __version__, "python": platform.python_version(), "started_utc": time.time()}
+            "marswalk_sim": __version__, "python": platform.python_version(), "started_utc": time.time(),
+            "num_maps": args.num_maps, "patches_per_map": args.patches_per_map, "finished": False}
+    meta_path = out / f"meta-{shard:05d}.json"
     try:
         import mujoco
         meta["mujoco"] = mujoco.__version__
@@ -86,11 +96,16 @@ def main() -> None:
         meta.update(calibrate(menv, policy, flat_start=opts["flat_start"]))
         print(f"[shard {shard}] calibration: {meta}", flush=True)
         if args.walker in ("myoleg-deprl", "kinesis") and not meta["policy_walks_on_flat_earth"]:
-            print(f"[shard {shard}] WARNING: the walker does not walk on flat Earth ground. "
+            print(f"[shard {shard}] the walker does not walk on flat Earth ground. "
                   "Run scripts/check_walker.py before spending compute.", flush=True)
-    (out / f"meta-{shard:05d}.json").write_text(json.dumps(meta, indent=2, default=str))
+            if not args.allow_not_walking:
+                meta["stopped"] = "walker failed the flat-Earth calibration"
+                meta_path.write_text(json.dumps(meta, indent=2, default=str))
+                sys.exit(3)
+    meta_path.write_text(json.dumps(meta, indent=2, default=str))
 
     rows, part, done = [], 0, 0
+    counts: dict = {}
     total = args.num_maps * args.patches_per_map
     for k in range(args.num_maps):
         map_id = f"r{args.seed}-s{shard:05d}-m{k:03d}"
@@ -101,15 +116,17 @@ def main() -> None:
                 row = rollout(menv, policy, p, keep_traj=args.save_traj, **opts)
             except Exception as e:  # keep the shard alive; record the failure
                 row = p.to_dict()
-                row["status"] = f"error: {type(e).__name__}: {e}"[:300]
+                row.update(empty_labels(f"error: {type(e).__name__}: {e}"[:300]))
             traj = row.pop("_traj", None)
             if traj is not None:
                 (out / "traj").mkdir(exist_ok=True)
                 np.savez_compressed(out / "traj" / f"{p.patch_id}.npz", **traj)
             row.update(policy=policy.name, walker=args.walker, frame_axis=menv.frame.axis,
-                       frame_sign=menv.frame.sign, shard_index=shard)
+                       frame_sign=menv.frame.sign, shard_index=shard, run_seed=args.seed)
             rows.append(row)
             done += 1
+            kind = "error" if str(row.get("status")).startswith("error") else str(row.get("status"))
+            counts[kind] = counts.get(kind, 0) + 1
             print(f"[shard {shard}] {done}/{total} {p.patch_id} slope={p.slope_deg:+.1f} "
                   f"g={p.gravity:.2f} status={row.get('status')} fell={row.get('fell')} "
                   f"dist={row.get('distance_m', float('nan')):.2f} wall={row.get('wall_time_s', 0):.1f}s", flush=True)
@@ -118,7 +135,12 @@ def main() -> None:
                 rows, part = [], part + 1
     if rows:
         pd.DataFrame(rows).to_parquet(out / f"part-{shard:05d}-{part:04d}.parquet", index=False)
-    print(f"[shard {shard}] finished {done} patches", flush=True)
+    meta.update(finished=True, finished_utc=time.time(), patches=done, parts=part + bool(rows), status_counts=counts)
+    meta_path.write_text(json.dumps(meta, indent=2, default=str))
+    print(f"[shard {shard}] finished {done} patches: {counts}", flush=True)
+    if counts.get("error", 0) > done / 2:
+        print(f"[shard {shard}] more than half of the patches raised an error", flush=True)
+        sys.exit(2)
 
 
 if __name__ == "__main__":
