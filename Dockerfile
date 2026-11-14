@@ -19,6 +19,7 @@ RUN pip install -r requirements.txt
 
 COPY marswalk_sim ./marswalk_sim
 COPY scripts ./scripts
+COPY kinesis_backend ./kinesis_backend
 COPY tests ./tests
 
 # Bake the DEP-RL walking weights into the image so cloud tasks never hit

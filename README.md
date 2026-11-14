@@ -2,7 +2,14 @@
 
 Walking-model data generator and step-cost surrogate for **Marswalk** (NASA Space Apps, Interplanetary Survival Guide: Martian Map).
 
-A muscle-driven human leg model (MyoSuite **myoLeg**, 80 muscles) walks across short Mars terrain **patches**. Each run is turned into labels such as energy cost, falls and stability. A gradient-boosted model then learns *terrain + suit → step cost*, and the Marswalk route planner uses it in place of the hand-made Pandolf + risk formula.
+A muscle-driven human leg model (MyoLeg, 80 muscles) walks across short Mars terrain **patches**. Two walkers drive it:
+
+| `--walker` | Controller | Image |
+|---|---|---|
+| `myoleg-deprl` | DEP-RL pretrained myoLegWalk policy (MyoSuite 3.1) | `Dockerfile` (Python 3.11) |
+| `kinesis` | KINESIS pretrained directional-control policy (EPFL, ICRA 2026). See [kinesis_backend/README.md](kinesis_backend/README.md) | `Dockerfile.kinesis` (Python 3.8) |
+
+Each run on a patch is turned into labels such as energy cost, falls and stability. A gradient-boosted model then learns *terrain + suit → step cost*, and the Marswalk route planner uses it in place of the hand-made Pandolf + risk formula.
 
 ```
 generate patches ──► simulate walker ──► labels ──► split by map ──► train surrogate ──► planner lookup
@@ -15,13 +22,14 @@ The runs use short patches instead of whole paths. A whole-path run gives one la
 
 | Part | Tested |
 |---|---|
-| Terrain patch → MuJoCo heightfield (heights checked with ray casts), gravity, suit mass, foot contacts | ✅ `tests/test_env.py` |
+| Terrain patch → MuJoCo heightfield (heights checked with ray casts, every walking axis, MuJoCo 3.17 and 3.1.2), gravity, suit mass, foot contacts | ✅ `tests/test_env.py`, `tests/test_placement.py` |
+| KINESIS XML patch (heightfield injected, floor disabled, body lands on terrain) | ✅ on a stand-in model |
 | Full generate → Parquet pipeline (with a non-walking `zero` policy) | ✅ |
 | Training, grouped split, metrics, planner lookup (on synthetic labels) | ✅ `tests/test_train.py` |
-| **DEP-RL pretrained walking policy actually walking in MyoSuite 3.1** | ❌ not yet. Its weights download from Google Drive, which the dev sandbox could not reach. **Run `gcp/submit.sh check` first.** |
-| Docker image build | ❌ not yet. It runs on Cloud Build, and the build itself runs the tests. |
+| **Either pretrained policy actually walking** | ❌ not yet. The weights come from Google Drive (DEP-RL) and Hugging Face (KINESIS), which the dev sandbox could not reach. **Run `gcp/submit.sh check` first.** |
+| Docker image builds | ❌ not yet. They run on Cloud Build, and each build runs the tests. |
 
-**Known risk:** the DEP-RL baseline was trained in 2023 on flat ground, at Earth gravity, with no suit. It may not walk in the current MyoSuite at all. If it walks, expect many falls at Mars gravity with a 40 kg pack. `check_walker` tells you which case you are in before you spend compute. See *If the walker does not walk* below.
+**Known risk:** both policies were trained on flat Earth ground with no suit. The DEP-RL baseline was trained in 2023 on flat ground, at Earth gravity, with no suit. It may not walk in the current MyoSuite at all. If it walks, expect many falls at Mars gravity with a 40 kg pack. `check_walker` tells you which case you are in before you spend compute. See *If the walker does not walk* below.
 
 ## What gets varied per patch (`marswalk_sim/config.py`)
 
@@ -54,10 +62,15 @@ export PROJECT=your-project-id
 export BUCKET=marswalk-data-<something-unique>
 export REGION=asia-southeast1          # optional
 
-bash gcp/submit.sh build               # APIs, bucket, Artifact Registry, Cloud Build image (~15–25 min)
-bash gcp/submit.sh check               # 1 task. Read gs://$BUCKET/checks/<name>.json when it finishes
-# only if the check says the policy walks:
-TASKS=50 PARALLEL=25 bash gcp/submit.sh generate   # 50 × 4 maps × 8 patches = 1,600 patches
+bash gcp/submit.sh build               # APIs, bucket, Artifact Registry, MyoLeg image (~15–25 min)
+bash gcp/submit.sh build-kinesis       # KINESIS image (~20–40 min)
+
+# 1 task each: flat Earth -> flat Mars -> Mars + 40 kg suit -> slope sweeps vs Minetti
+bash gcp/submit.sh check
+WALKER=kinesis bash gcp/submit.sh check
+# read gs://$BUCKET/checks/<name>.json ("verdict" line) and pick the walker that walks
+
+WALKER=kinesis TASKS=50 PARALLEL=25 bash gcp/submit.sh generate   # 50 × 4 maps × 8 patches = 1,600 patches
 ```
 
 * Each task is one shard with its own seed (`BATCH_TASK_INDEX`), so re-runs and retries never duplicate data.
@@ -84,8 +97,8 @@ python3.11 -m venv .venv && source .venv/bin/activate
 pip install torch==2.15.0 --index-url https://download.pytorch.org/whl/cpu
 pip install -r requirements.txt
 python -m pytest -q tests
-python scripts/generate.py --out data/smoke --num-maps 1 --patches-per-map 2 --policy zero   # pipeline check
-python scripts/check_walker.py --policy deprl                                                # downloads weights once
+python scripts/generate.py --out data/smoke --num-maps 1 --patches-per-map 2 --walker myoleg-zero   # pipeline check
+python scripts/check_walker.py --walker myoleg-deprl                                                # downloads weights once
 ```
 
 ## If the walker does not walk
@@ -93,7 +106,7 @@ python scripts/check_walker.py --policy deprl                                   
 Try these in order:
 1. **Pin an older MyoSuite** that matches the 2023 baseline (the observation layout may have changed). Then re-run `check`.
 2. **Fine-tune with DEP-RL**: start from the baseline and train on `myoLegRoughTerrainWalk-v0` with gravity and pack mass randomised over the ranges above (`python -m deprl.main <config.yaml>`). A GPU VM helps here.
-3. Switch the walker to **SCONE** (`sconegym`), which has pretrained gait models. Only `env.py` and `policies.py` change, and the rest of the pipeline stays the same.
+3. Use the **KINESIS** walker (`--walker kinesis`), or add another backend (SCONE, a MuJoCo Playground humanoid). A backend only needs the small interface described at the top of `marswalk_sim/env.py`.
 
 ## Layout
 
@@ -101,14 +114,19 @@ Try these in order:
 marswalk_sim/
   config.py     ranges, constants
   terrain.py    PatchParams, heightfield builder, DTM-style terrain stats
-  env.py        MyoSuite wrapper: writes terrain, gravity, friction, pack mass; disables the flat floor
-  policies.py   deprl | zero | random controllers
-  runner.py     one rollout → labels
+  placement.py  puts a heightfield into any MuJoCo model along ±x / ±y
+  env.py        MyoSuite wrapper: terrain, gravity, friction, pack mass; disables the flat floor
+  policies.py   DEP-RL | zero | random controllers for the MyoSuite walker
+  walkers.py    --walker name → (env, policy)
+  runner.py     one rollout → labels (any walker)
+kinesis_backend/
+  kinesis_env.py  KINESIS env subclass + policy wrapper (Python 3.8)
 scripts/
   generate.py   one shard → Parquet (Cloud Batch entry point)
-  check_walker.py  walks? + Earth slope sweep vs Minetti 2002 + Mars sweep
+  check_walker.py  flat Earth → flat Mars → Mars + suit → slope sweeps vs Minetti 2002
   train.py      grouped split, gradient boosting, metrics, planner lookup
 gcp/            Batch job template + submit.sh
+Dockerfile      MyoLeg / DEP-RL image      Dockerfile.kinesis   KINESIS image
 tests/          env and training tests (also run during the Docker build)
 ```
 
@@ -122,6 +140,7 @@ tests/          env and training tests (also run during the Docker build)
 
 * MyoSuite (Caggiano et al., 2022) and the Rajagopal 2016 leg model
 * DEP-RL (Schumacher et al., 2023) pretrained myoLegWalk baseline
+* KINESIS (Simos, Chiappa, Mathis, ICRA 2026), github.com/amathislab/kinesis
 * Minetti et al. 2002, energy cost of walking on gradients (`check_walker.py`)
 * Hof et al. 2005, margin of stability (extrapolated centre of mass)
 * Pandolf 1977 / Santee 2003: the analytic model this surrogate replaces

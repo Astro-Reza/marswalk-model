@@ -6,3 +6,4 @@ models/
 baselines_DEPRL/
 check_walker.json
 gcp/job-*.json
+gcp/cloudbuild-kinesis.yaml
