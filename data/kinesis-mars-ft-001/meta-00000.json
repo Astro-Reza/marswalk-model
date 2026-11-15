@@ -1,0 +1,28 @@
+{
+  "shard_index": 0,
+  "seed": 2027,
+  "walker": "kinesis",
+  "policy": "kinesis-directional",
+  "marswalk_sim": "0.2.0",
+  "python": "3.8.20",
+  "started_utc": 1794747694.505516,
+  "num_maps": 10,
+  "patches_per_map": 8,
+  "finished": true,
+  "mujoco": "3.1.2",
+  "calib_forward_m": 2.9006887231129967,
+  "calib_lateral_drift_m": 0.862842973659552,
+  "calib_fell": false,
+  "policy_walks_on_flat_earth": true,
+  "calib_flipped_forward": false,
+  "frame_axis": 0,
+  "frame_sign": -1,
+  "calib_seconds": 4.0,
+  "finished_utc": 1794747928.6257532,
+  "patches": 80,
+  "parts": 10,
+  "status_counts": {
+    "ok": 16,
+    "fell_before_patch": 64
+  }
+}

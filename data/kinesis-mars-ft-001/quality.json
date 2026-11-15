@@ -1,0 +1,161 @@
+{
+  "verdict": "fail",
+  "checks": [
+    {
+      "check": "schema",
+      "level": "pass",
+      "detail": "320 rows, 61 columns"
+    },
+    {
+      "check": "unique_patches",
+      "level": "pass",
+      "detail": "no repeated patch_id"
+    },
+    {
+      "check": "sim_version",
+      "level": "pass",
+      "detail": "0.2.0"
+    },
+    {
+      "check": "errors",
+      "level": "pass",
+      "detail": "0.0% of patches raised an error"
+    },
+    {
+      "check": "reached_patch",
+      "level": "fail",
+      "detail": "25.3% of patches were reached; status counts {'fell_before_patch': 239, 'ok': 81}"
+    },
+    {
+      "check": "calibration",
+      "level": "pass",
+      "detail": "4/4 shards calibrated and walked"
+    },
+    {
+      "check": "shards_finished",
+      "level": "pass",
+      "detail": "all 4 shards finished"
+    },
+    {
+      "check": "mars_walked",
+      "level": "fail",
+      "detail": "2/64 reached Mars patches were walked without a fall (3.1%)"
+    },
+    {
+      "check": "enough_rows",
+      "level": "warn",
+      "detail": "5 walked rows (want at least 200 to train the cost model)"
+    },
+    {
+      "check": "range_speed_mps",
+      "level": "pass",
+      "detail": "0.0% of walked rows outside 0.3..2.5 or empty (median 1.13)"
+    },
+    {
+      "check": "range_cot_net_J_per_kg_m",
+      "level": "fail",
+      "detail": "100.0% of walked rows outside 0.2..30.0 or empty (median 59.6)"
+    },
+    {
+      "check": "range_stride_time_mean_s",
+      "level": "pass",
+      "detail": "0.0% of walked rows outside 0.4..2.5 or empty (median 0.852)"
+    },
+    {
+      "check": "range_peak_grf_bw",
+      "level": "fail",
+      "detail": "80.0% of walked rows outside 0.5..6.0 or empty (median 12.5)"
+    },
+    {
+      "check": "missed_falls",
+      "level": "pass",
+      "detail": "0 rows not marked as falls where the centre of mass dropped below 60 % of its start height"
+    },
+    {
+      "check": "fall_reasons",
+      "level": "pass",
+      "detail": "{'env': 74}"
+    },
+    {
+      "check": "slope_feature",
+      "level": "pass",
+      "detail": "measured slope vs requested slope: 95 % within 0.30 deg"
+    },
+    {
+      "check": "path_slope",
+      "level": "pass",
+      "detail": "slope under the walker vs patch slope: median gap 0.68 deg, 95 % within 0.75 deg"
+    },
+    {
+      "check": "slope_coverage",
+      "level": "warn",
+      "detail": "fewer than 10 walked rows in slope bands ['below -15', '-15 to -5', '-5 to +5', '+5 to +15', 'above +15']: the cost model extrapolates there"
+    },
+    {
+      "check": "fall_classes",
+      "level": "warn",
+      "detail": "74 falls, 7 non-falls among reached patches (want at least 20 of each)"
+    },
+    {
+      "check": "maps",
+      "level": "warn",
+      "detail": "4 maps with walked rows (the split is by map; want at least 20)"
+    },
+    {
+      "check": "earth_check",
+      "level": "warn",
+      "detail": "only 3 walked Earth rows: no check against Minetti 2002"
+    }
+  ],
+  "summary": {
+    "rows": 320,
+    "reached_patch": 81,
+    "walked": 5,
+    "falls": 74,
+    "maps": 40,
+    "mars_rows": 64,
+    "earth_rows": 17,
+    "status": {
+      "fell_before_patch": 239,
+      "ok": 81
+    },
+    "by_slope": [
+      {
+        "slope_band_deg": "below -15",
+        "rows": 22,
+        "walked": 0,
+        "fall_rate": 1.0,
+        "cot_net_median": null
+      },
+      {
+        "slope_band_deg": "-15 to -5",
+        "rows": 18,
+        "walked": 2,
+        "fall_rate": 0.8888888888888888,
+        "cot_net_median": 58.50485179743968
+      },
+      {
+        "slope_band_deg": "-5 to +5",
+        "rows": 12,
+        "walked": 3,
+        "fall_rate": 0.6666666666666666,
+        "cot_net_median": 60.34836019773121
+      },
+      {
+        "slope_band_deg": "+5 to +15",
+        "rows": 24,
+        "walked": 0,
+        "fall_rate": 0.9583333333333334,
+        "cot_net_median": null
+      },
+      {
+        "slope_band_deg": "above +15",
+        "rows": 5,
+        "walked": 0,
+        "fall_rate": 1.0,
+        "cot_net_median": null
+      }
+    ]
+  },
+  "data": "data/kinesis-mars-ft-001"
+}
