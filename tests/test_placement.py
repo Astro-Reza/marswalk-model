@@ -15,8 +15,9 @@ TINY = """
 <mujoco>
   <asset><hfield name="h" nrow="100" ncol="100" size="1 1 1 0.1"/></asset>
   <worldbody>
-    <geom name="floor" type="plane" size="20 20 0.1"/>
+    <geom name="floor" type="plane" size="20 20 0.1" contype="0" conaffinity="0"/>
     <geom name="t" type="hfield" hfield="h"/>
+    <body name="probe" pos="0 0 5"><freejoint/><geom type="sphere" size="0.03"/></body>
   </worldbody>
 </mujoco>
 """
@@ -33,14 +34,15 @@ def test_place_along_axes(axis, sign):
     fr = Frame((0.6, -1.2), axis=axis, sign=sign)
     place_heightfield(m, d, tid, hid, hf, fr, friction=0.8)
     mujoco.mj_forward(m, d)  # must not move the terrain back
+    # Probe with contacts, not mj_rayHfield: the ray is wrong along -x on MuJoCo 3.1.2 (KINESIS) while contacts are right.
     for s in (0.0, 4.0, 9.0):
         for lat in (-2.0, 1.5):
             w = fr.world(s, lat)
-            dist = mujoco.mj_rayHfield(m, d, tid, np.array([w[0], w[1], 50.0]), np.array([0, 0, -1.0]))
-            got = 50.0 - dist
-            i = np.argmin(abs(hf.s - s))
-            j = np.argmin(abs(hf.x - lat))
-            assert abs(got - hf.z[i, j]) < 0.12, (axis, sign, s, lat, got, hf.z[i, j])
+            z = ground_z(hf, s, lat)
+            for gap, touching in ((-0.02, True), (0.12, False)):
+                d.qpos[:3] = [w[0], w[1], z + 0.03 + gap]
+                mujoco.mj_forward(m, d)
+                assert (d.ncon > 0) == touching, (axis, sign, s, lat, gap)
 
 
 def test_patch_xml_with_include(tmp_path):

@@ -1,0 +1,109 @@
+{
+  "rows_total": 320,
+  "status_counts": {
+    "fell_before_patch": 239,
+    "ok": 81
+  },
+  "data": [
+    "data/kinesis-mars-ft-001"
+  ],
+  "quality": {
+    "verdict": "fail",
+    "failed": [
+      {
+        "check": "reached_patch",
+        "level": "fail",
+        "detail": "25.3% of patches were reached; status counts {'fell_before_patch': 239, 'ok': 81}"
+      },
+      {
+        "check": "mars_walked",
+        "level": "fail",
+        "detail": "2/64 reached Mars patches were walked without a fall (3.1%)"
+      },
+      {
+        "check": "range_cot_net_J_per_kg_m",
+        "level": "fail",
+        "detail": "100.0% of walked rows outside 0.2..30.0 or empty (median 59.6)"
+      },
+      {
+        "check": "range_peak_grf_bw",
+        "level": "fail",
+        "detail": "80.0% of walked rows outside 0.5..6.0 or empty (median 12.5)"
+      }
+    ],
+    "warnings": [
+      {
+        "check": "enough_rows",
+        "level": "warn",
+        "detail": "5 walked rows (want at least 200 to train the cost model)"
+      },
+      {
+        "check": "slope_coverage",
+        "level": "warn",
+        "detail": "fewer than 10 walked rows in slope bands ['below -15', '-15 to -5', '-5 to +5', '+5 to +15', 'above +15']: the cost model extrapolates there"
+      },
+      {
+        "check": "fall_classes",
+        "level": "warn",
+        "detail": "74 falls, 7 non-falls among reached patches (want at least 20 of each)"
+      },
+      {
+        "check": "maps",
+        "level": "warn",
+        "detail": "4 maps with walked rows (the split is by map; want at least 20)"
+      },
+      {
+        "check": "earth_check",
+        "level": "warn",
+        "detail": "only 3 walked Earth rows: no check against Minetti 2002"
+      }
+    ]
+  },
+  "maps": {
+    "test": 5,
+    "val": 5,
+    "train": 21
+  },
+  "cot": {
+    "skipped": true,
+    "train_rows": 4
+  },
+  "fall": {
+    "target": "fell",
+    "params": {
+      "learning_rate": 0.05,
+      "max_leaf_nodes": 15,
+      "min_samples_leaf": 20
+    },
+    "val_selection_score": 1.1498923380545867,
+    "train": {
+      "n": 59,
+      "positive_rate": 0.9152542372881356,
+      "brier": 0.003755361036813671,
+      "accuracy": 1.0,
+      "auc": 1.0
+    },
+    "val": {
+      "n": 8,
+      "positive_rate": 0.875,
+      "brier": 0.1249758446635195,
+      "accuracy": 0.875,
+      "auc": 0.7142857142857143
+    },
+    "test": {
+      "n": 14,
+      "positive_rate": 0.9285714285714286,
+      "brier": 0.0799035949975003,
+      "accuracy": 0.9285714285714286,
+      "auc": 0.6153846153846154
+    }
+  },
+  "mos": {
+    "skipped": true,
+    "train_rows": 4
+  },
+  "speed": {
+    "skipped": true,
+    "train_rows": 4
+  }
+}
