@@ -220,6 +220,7 @@ class KinesisMarsEnv:
         np.random.seed(int(p.seed) % (2**31 - 1))
         self.kenv.mars_hf = None  # flat during reset so the start pose is computed on z = 0
         self.kenv.reset()
+        self.d.time = 0.0  # KINESIS reset keeps MuJoCo time running; runner.py measures from t = 0
         root = self.d.qpos[:3].copy()
         # direction 0: the goal sits toward world -x from the pelvis
         self.frame = Frame((root[0], root[1]), axis=0, sign=-1)
